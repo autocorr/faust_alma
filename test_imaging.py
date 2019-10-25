@@ -323,23 +323,6 @@ def fitspw_from_spws(spws):
     return ','.join('{0}:{1}'.format(s.spw_id, s.fitchan) for s in spw_list)
 
 
-def line_spw_select(spw, contsub, pipe='default'):
-    """
-    There are offsets in the SPW ID numbers for the combinations of pipeline
-    and continuum subtraction procedures. When using just Claire's calibrated
-    dataset, which preserves the same SPW ID numbers, this function will not be
-    necessary. My continuum subtraction removed the X-band pointing SPWs, so
-    shifted the indices down by 2.
-    """
-    if pipe == 'default':
-        spw_id = spw.spw_id - 2 if contsub else spw.spw_id
-    elif contsub and pipe == 'claire':
-        spw_id = spw.spw_id
-    else:
-        raise ValueError('Invalid MS group: {0}'.format(pipe))
-    return str(spw_id)
-
-
 ###############################################################################
 # Calibration
 ###############################################################################
@@ -463,7 +446,7 @@ def test_clean_line_target(cfg, spw, ext=None, iterzero=False, fullcube=False,
 
 def clean_all_lines(cfg):
     for ii, spw in enumerate(SPWS[cfg.setup]):
-        test_clean_line_target(cfg, parallel=True)
+        test_clean_line_target(cfg, spw, parallel=True)
 
 
 def pbcor_all_lines(targ, overwrite=True):
@@ -959,135 +942,5 @@ def test_imspec_smooth(targ, spw):
     ia.open(imagebase+'_smmask.image')
     ia.putchunk(data)
     ia.close()
-
-
-def test_clean_bconfig_line():
-    """
-    Run tclean on IRAS4A for the lowest Q branch levels.
-    """
-    contsub = False
-    restart = False
-    iterzero = True
-    fullcube = True
-    parallel = False
-    vis = 'pipe_default/18B-166.sb36429482.eb36490698.58560.06065813657.ms'
-    imagename = 'test_imaging/bconfig_ch3oh/NGC1333IRAS4A_CH3OH_line10'
-    spw = IRAS4A_SPWS['CH3OH_line10']
-    spw_id = line_spw_select(spw, contsub)
-    # restart parameters
-    niter = 0 if iterzero else int(1e6)
-    calcpsf = not restart  # ie True when not restarting
-    calcres = not restart
-    threshold = '0.0mJy'
-    if not fullcube and spw.line_win != -1:
-        start = int(spw.nchan / 2) - spw.line_win
-        nchan = spw.line_win * 2
-    else:
-        start = -1
-        nchan = -1
-    delete_all_extensions(imagename)
-    tclean(
-        vis=vis,
-        imagename=imagename,
-        field='NGC1333IRAS4A',
-        spw=spw_id,
-        specmode='cube',
-        outframe='lsrk',
-        veltype='radio',
-        restfreq=spw.restfreq,
-        start=start,
-        nchan=nchan,
-        #imsize=[5000, 5000],  # 192.9 as, efficient size
-        imsize=[350, 350],  # 13.5 as, faster
-        cell='0.03857arcsec',  # 0.27 as / 7
-        # gridder parameters
-        gridder='standard',
-        # deconvolver parameters
-        deconvolver='multiscale',
-        scales=[0, 7, 14],  # point, 1, 2 beam hpbw's
-        smallscalebias=0.6,
-        restoringbeam='common',
-        weighting='briggs',
-        robust=1.0,
-        niter=niter,
-        threshold=threshold,
-        interactive=False,
-        parallel=parallel,
-        # automasking parameters
-        usemask='auto-multithresh',  # use ALMA 12m(short) values
-        noisethreshold=5.0,
-        sidelobethreshold=3.0,
-        lownoisethreshold=2.0,
-        minbeamfrac=0.3,
-        negativethreshold=1000.0,
-        verbose=True,
-        # restart parameters
-        restart=restart,
-        calcpsf=calcpsf,
-        calcres=calcres,
-    )
-    workdir = '{0}.workdirectory'.format(imagename)
-    if os.path.exists(workdir):
-        shutil.rmtree(workdir)
-
-
-def test_clean_bconfig_cont():
-    contsub = False
-    restart = False
-    iterzero = False
-    fullcube = True
-    parallel = False
-    vis = [
-        'pipe_default/18B-166.sb36429482.eb36490698.58560.06065813657.ms',
-        #'pipe_default/18B-166.sb35938164.eb35988881.58462.137608819445.ms',
-    ]
-    imagename = 'test_imaging/bconfig_ch3oh/NGC1333IRAS4A_cont_mtmfs'
-    targ = TARGETS['NGC1333IRAS4A']
-    # restart parameters
-    niter = 0 if iterzero else int(1e6)
-    calcpsf = not restart  # ie True when not restarting
-    calcres = not restart
-    cont_spws = get_spw_list(targ, kind='cont')
-    linefree = fitspw_from_spws(cont_spws)
-    #spws = '40:5~60'  # XXX
-    delete_all_extensions(imagename)
-    tclean(
-        vis=vis,
-        imagename=imagename,
-        field=targ.name,
-        spw=linefree,
-        specmode='mfs',
-        nterms=2,
-        imsize=[350, 350],  # 13.5 as, faster
-        cell='0.03857arcsec',  # 0.27 as / 7
-        # gridder parameters
-        gridder='standard',
-        # deconvolver parameters
-        deconvolver='mtmfs',
-        scales=[0, 7, 14],  # point, 1, 2 beam hpbw's
-        smallscalebias=0.6,
-        weighting='briggs',
-        robust=1.0,
-        niter=niter,
-        threshold='28uJy',  # ~7 uJy/bm in semi-clean full-bandwidth
-        interactive=True,
-        parallel=parallel,
-        # automasking parameters
-        #usemask='auto-multithresh',
-        #noisethreshold=5.0,
-        #sidelobethreshold=3.0,
-        #lownoisethreshold=2.0,
-        #minbeamfrac=0.3,
-        #negativethreshold=0.0,
-        #verbose=True,
-        # restart parameters
-        restart=restart,
-        calcpsf=calcpsf,
-        calcres=calcres,
-        #savemodel='modelcolumn',
-    )
-    workdir = '{0}.workdirectory'.format(imagename)
-    if os.path.exists(workdir):
-        shutil.rmtree(workdir)
 
 
